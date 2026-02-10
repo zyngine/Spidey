@@ -1,6 +1,10 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const http = require('http');
 const { initDb, getApprovalChannel, setApprovalChannel, getAssignableRoles, isRoleAssignable, addAssignableRole, removeAssignableRole } = require('./db');
 require('dotenv').config();
+
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => { res.writeHead(200); res.end('Spidey is running'); }).listen(port);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
