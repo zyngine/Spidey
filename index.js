@@ -1,20 +1,13 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { initDb, getApprovalChannel, setApprovalChannel, getAssignableRoles, isRoleAssignable, addAssignableRole, removeAssignableRole } = require('./db');
 require('dotenv').config();
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// Per-guild stores (in-memory — resets on restart)
-const guildConfig = new Map();       // guildId -> { approvalChannelId }
-const assignableRoles = new Map();   // guildId -> Map(roleId -> { id, name, description })
-
-function getGuildRoles(guildId) {
-  if (!assignableRoles.has(guildId)) assignableRoles.set(guildId, new Map());
-  return assignableRoles.get(guildId);
-}
-
-client.once('ready', () => {
+client.once('ready', async () => {
+  await initDb();
   console.log(`Spidey is online as ${client.user.tag}`);
 });
 
@@ -22,7 +15,6 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
 
   const guildId = interaction.guild.id;
-  const roles = getGuildRoles(guildId);
 
   // ---------- Slash Commands ----------
   if (interaction.isChatInputCommand()) {
@@ -40,7 +32,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: 'Please select a text channel.', ephemeral: true });
       }
 
-      guildConfig.set(guildId, { approvalChannelId: channel.id });
+      await setApprovalChannel(guildId, channel.id);
       return interaction.reply({ content: `Approval channel set to ${channel}.`, ephemeral: true });
     }
 
@@ -52,7 +44,7 @@ client.on('interactionCreate', async (interaction) => {
         const role = interaction.options.getRole('role');
         const reason = interaction.options.getString('reason') || 'No reason provided';
 
-        if (!roles.has(role.id)) {
+        if (!(await isRoleAssignable(guildId, role.id))) {
           return interaction.reply({ content: `**${role.name}** is not available for request. Use \`/role list\` to see what's available.`, ephemeral: true });
         }
 
@@ -60,12 +52,12 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: `You already have the **${role.name}** role.`, ephemeral: true });
         }
 
-        const config = guildConfig.get(guildId);
-        if (!config || !config.approvalChannelId) {
+        const approvalChannelId = await getApprovalChannel(guildId);
+        if (!approvalChannelId) {
           return interaction.reply({ content: 'Approval channel not configured. Ask an admin to run `/config approval-channel`.', ephemeral: true });
         }
 
-        const approvalChannel = interaction.guild.channels.cache.get(config.approvalChannelId);
+        const approvalChannel = interaction.guild.channels.cache.get(approvalChannelId);
         if (!approvalChannel) {
           return interaction.reply({ content: 'Approval channel no longer exists. Ask an admin to run `/config approval-channel`.', ephemeral: true });
         }
@@ -104,7 +96,7 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: `You don't have the **${role.name}** role.`, ephemeral: true });
         }
 
-        if (!roles.has(role.id)) {
+        if (!(await isRoleAssignable(guildId, role.id))) {
           return interaction.reply({ content: `**${role.name}** is not managed by Spidey.`, ephemeral: true });
         }
 
@@ -114,12 +106,14 @@ client.on('interactionCreate', async (interaction) => {
 
       // --- /role list ---
       if (sub === 'list') {
-        if (roles.size === 0) {
+        const roles = await getAssignableRoles(guildId);
+
+        if (roles.length === 0) {
           return interaction.reply({ content: 'No roles are currently available for request.', ephemeral: true });
         }
 
-        const roleList = [...roles.values()]
-          .map((r, i) => `${i + 1}. <@&${r.id}> — ${r.description}`)
+        const roleList = roles
+          .map((r, i) => `${i + 1}. <@&${r.role_id}> — ${r.description}`)
           .join('\n');
 
         const embed = new EmbedBuilder()
@@ -139,7 +133,7 @@ client.on('interactionCreate', async (interaction) => {
         const role = interaction.options.getRole('role');
         const description = interaction.options.getString('description') || 'No description';
 
-        roles.set(role.id, { id: role.id, name: role.name, description });
+        await addAssignableRole(guildId, role.id, role.name, description);
         return interaction.reply({ content: `**${role.name}** is now available for request.`, ephemeral: true });
       }
 
@@ -151,11 +145,11 @@ client.on('interactionCreate', async (interaction) => {
 
         const role = interaction.options.getRole('role');
 
-        if (!roles.has(role.id)) {
+        const removed = await removeAssignableRole(guildId, role.id);
+        if (!removed) {
           return interaction.reply({ content: `**${role.name}** is not in the assignable list.`, ephemeral: true });
         }
 
-        roles.delete(role.id);
         return interaction.reply({ content: `**${role.name}** is no longer available for request.`, ephemeral: true });
       }
     }
