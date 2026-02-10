@@ -5,17 +5,44 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-// In-memory store for assignable roles (persists per session — see note below)
-const assignableRoles = new Map();
+// Per-guild stores (in-memory — resets on restart)
+const guildConfig = new Map();       // guildId -> { approvalChannelId }
+const assignableRoles = new Map();   // guildId -> Map(roleId -> { id, name, description })
+
+function getGuildRoles(guildId) {
+  if (!assignableRoles.has(guildId)) assignableRoles.set(guildId, new Map());
+  return assignableRoles.get(guildId);
+}
 
 client.once('ready', () => {
   console.log(`Spidey is online as ${client.user.tag}`);
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (!interaction.guild) return;
+
+  const guildId = interaction.guild.id;
+  const roles = getGuildRoles(guildId);
+
   // ---------- Slash Commands ----------
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
+
+    // --- /config approval-channel ---
+    if (commandName === 'config') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        return interaction.reply({ content: 'You need **Manage Server** permission.', ephemeral: true });
+      }
+
+      const channel = interaction.options.getChannel('channel');
+
+      if (!channel.isTextBased()) {
+        return interaction.reply({ content: 'Please select a text channel.', ephemeral: true });
+      }
+
+      guildConfig.set(guildId, { approvalChannelId: channel.id });
+      return interaction.reply({ content: `Approval channel set to ${channel}.`, ephemeral: true });
+    }
 
     if (commandName === 'role') {
       const sub = interaction.options.getSubcommand();
@@ -25,7 +52,7 @@ client.on('interactionCreate', async (interaction) => {
         const role = interaction.options.getRole('role');
         const reason = interaction.options.getString('reason') || 'No reason provided';
 
-        if (!assignableRoles.has(role.id)) {
+        if (!roles.has(role.id)) {
           return interaction.reply({ content: `**${role.name}** is not available for request. Use \`/role list\` to see what's available.`, ephemeral: true });
         }
 
@@ -33,11 +60,14 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: `You already have the **${role.name}** role.`, ephemeral: true });
         }
 
-        const approvalChannelId = process.env.APPROVAL_CHANNEL_ID;
-        const approvalChannel = interaction.guild.channels.cache.get(approvalChannelId);
+        const config = guildConfig.get(guildId);
+        if (!config || !config.approvalChannelId) {
+          return interaction.reply({ content: 'Approval channel not configured. Ask an admin to run `/config approval-channel`.', ephemeral: true });
+        }
 
+        const approvalChannel = interaction.guild.channels.cache.get(config.approvalChannelId);
         if (!approvalChannel) {
-          return interaction.reply({ content: 'Approval channel not configured. Ask an admin to set `APPROVAL_CHANNEL_ID`.', ephemeral: true });
+          return interaction.reply({ content: 'Approval channel no longer exists. Ask an admin to run `/config approval-channel`.', ephemeral: true });
         }
 
         const embed = new EmbedBuilder()
@@ -74,7 +104,7 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: `You don't have the **${role.name}** role.`, ephemeral: true });
         }
 
-        if (!assignableRoles.has(role.id)) {
+        if (!roles.has(role.id)) {
           return interaction.reply({ content: `**${role.name}** is not managed by Spidey.`, ephemeral: true });
         }
 
@@ -84,11 +114,11 @@ client.on('interactionCreate', async (interaction) => {
 
       // --- /role list ---
       if (sub === 'list') {
-        if (assignableRoles.size === 0) {
+        if (roles.size === 0) {
           return interaction.reply({ content: 'No roles are currently available for request.', ephemeral: true });
         }
 
-        const roleList = [...assignableRoles.values()]
+        const roleList = [...roles.values()]
           .map((r, i) => `${i + 1}. <@&${r.id}> — ${r.description}`)
           .join('\n');
 
@@ -109,7 +139,7 @@ client.on('interactionCreate', async (interaction) => {
         const role = interaction.options.getRole('role');
         const description = interaction.options.getString('description') || 'No description';
 
-        assignableRoles.set(role.id, { id: role.id, name: role.name, description });
+        roles.set(role.id, { id: role.id, name: role.name, description });
         return interaction.reply({ content: `**${role.name}** is now available for request.`, ephemeral: true });
       }
 
@@ -121,11 +151,11 @@ client.on('interactionCreate', async (interaction) => {
 
         const role = interaction.options.getRole('role');
 
-        if (!assignableRoles.has(role.id)) {
+        if (!roles.has(role.id)) {
           return interaction.reply({ content: `**${role.name}** is not in the assignable list.`, ephemeral: true });
         }
 
-        assignableRoles.delete(role.id);
+        roles.delete(role.id);
         return interaction.reply({ content: `**${role.name}** is no longer available for request.`, ephemeral: true });
       }
     }
