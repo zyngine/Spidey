@@ -1,6 +1,11 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const http = require('http');
-const { initDb, getApprovalChannel, setApprovalChannel, getAssignableRoles, isRoleAssignable, addAssignableRole, removeAssignableRole } = require('./db');
+const {
+  initDb, getApprovalChannel, setApprovalChannel,
+  getAssignableRoles, isRoleAssignable, addAssignableRole, removeAssignableRole,
+  addStickyRole, removeStickyRole, getStickyRoles,
+  saveMemberRoles, getSavedMemberRoles, clearSavedMemberRoles
+} = require('./db');
 require('dotenv').config();
 
 const port = process.env.PORT || 3000;
@@ -157,6 +162,44 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `**${role.name}** is no longer available for request.`, ephemeral: true });
       }
     }
+
+    // --- /sticky ---
+    if (commandName === 'sticky') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        return interaction.reply({ content: 'You need **Manage Roles** permission.', ephemeral: true });
+      }
+
+      const sub = interaction.options.getSubcommand();
+
+      if (sub === 'add') {
+        const role = interaction.options.getRole('role');
+        await addStickyRole(guildId, role.id);
+        return interaction.reply({ content: `**${role.name}** is now a sticky role. It will be re-applied when members rejoin.`, ephemeral: true });
+      }
+
+      if (sub === 'remove') {
+        const role = interaction.options.getRole('role');
+        const removed = await removeStickyRole(guildId, role.id);
+        if (!removed) {
+          return interaction.reply({ content: `**${role.name}** is not a sticky role.`, ephemeral: true });
+        }
+        return interaction.reply({ content: `**${role.name}** is no longer sticky.`, ephemeral: true });
+      }
+
+      if (sub === 'list') {
+        const stickyIds = await getStickyRoles(guildId);
+        if (stickyIds.length === 0) {
+          return interaction.reply({ content: 'No sticky roles configured.', ephemeral: true });
+        }
+        const list = stickyIds.map((id, i) => `${i + 1}. <@&${id}>`).join('\n');
+        const embed = new EmbedBuilder()
+          .setTitle('Sticky Roles')
+          .setColor(0x3498DB)
+          .setDescription(list)
+          .setFooter({ text: 'These roles are re-applied when members rejoin the server' });
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
   }
 
   // ---------- Button Interactions (Approve / Deny) ----------
@@ -204,6 +247,43 @@ client.on('interactionCreate', async (interaction) => {
 
       await member.send(`Your request for **${role.name}** has been **denied**.`).catch(() => {});
     }
+  }
+});
+
+// ---------- Sticky Roles: Save on Leave ----------
+client.on('guildMemberRemove', async (member) => {
+  try {
+    const stickyIds = await getStickyRoles(member.guild.id);
+    if (stickyIds.length === 0) return;
+
+    const memberStickyRoles = member.roles.cache
+      .filter(r => stickyIds.includes(r.id))
+      .map(r => r.id);
+
+    if (memberStickyRoles.length > 0) {
+      await saveMemberRoles(member.guild.id, member.id, memberStickyRoles);
+      console.log(`Saved ${memberStickyRoles.length} sticky role(s) for ${member.user.tag}`);
+    }
+  } catch (err) {
+    console.error('Error saving sticky roles on member leave:', err);
+  }
+});
+
+// ---------- Sticky Roles: Restore on Rejoin ----------
+client.on('guildMemberAdd', async (member) => {
+  try {
+    const savedRoles = await getSavedMemberRoles(member.guild.id, member.id);
+    if (savedRoles.length === 0) return;
+
+    const rolesToAdd = savedRoles.filter(id => member.guild.roles.cache.has(id));
+    if (rolesToAdd.length > 0) {
+      await member.roles.add(rolesToAdd);
+      console.log(`Restored ${rolesToAdd.length} sticky role(s) for ${member.user.tag}`);
+    }
+
+    await clearSavedMemberRoles(member.guild.id, member.id);
+  } catch (err) {
+    console.error('Error restoring sticky roles on member join:', err);
   }
 });
 

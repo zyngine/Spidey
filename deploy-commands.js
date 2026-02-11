@@ -44,6 +44,23 @@ const commands = [
         .setDescription('Remove a role from the requestable list (Admin)')
         .addRoleOption(opt => opt.setName('role').setDescription('The role to remove from the list').setRequired(true))
     )
+  new SlashCommandBuilder()
+    .setName('sticky')
+    .setDescription('Sticky role management')
+    .addSubcommand(sub =>
+      sub.setName('add')
+        .setDescription('Make a role sticky (re-applied when members rejoin)')
+        .addRoleOption(opt => opt.setName('role').setDescription('The role to make sticky').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('remove')
+        .setDescription('Remove a role from the sticky list')
+        .addRoleOption(opt => opt.setName('role').setDescription('The role to remove').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('list')
+        .setDescription('List all sticky roles')
+    )
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
