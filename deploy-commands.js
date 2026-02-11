@@ -43,7 +43,7 @@ const commands = [
       sub.setName('remove-assignable')
         .setDescription('Remove a role from the requestable list (Admin)')
         .addRoleOption(opt => opt.setName('role').setDescription('The role to remove from the list').setRequired(true))
-    )
+    ),
   new SlashCommandBuilder()
     .setName('sticky')
     .setDescription('Sticky role management')
